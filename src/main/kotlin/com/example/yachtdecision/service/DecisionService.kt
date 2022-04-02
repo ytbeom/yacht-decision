@@ -27,58 +27,59 @@ class DecisionService {
         }
 
         val scores = state.scoreBoard[player]!!
-        val possibleScores = scores.filter {
+        val notScoredCategorySet = scores.filter {
             it.value == null
         }.map {
             it.key
         }.toSet()
 
-        check(possibleScores.isNotEmpty())
+        check(notScoredCategorySet.isNotEmpty())
 
-        return decide(trial, dices, possibleScores)
+        return decide(trial, dices, notScoredCategorySet)
     }
 
-    private fun decide(trial: Int, dices: Map<Int, List<Int>>, possibleScores: Set<String>): Decision {
+    private fun decide(trial: Int, dices: Map<Int, List<Int>>, notScoredCategorySet: Set<String>): Decision {
         return if (trial == 3) {
-            decideByCurrent(dices, possibleScores)
+            decideByCurrent(dices, notScoredCategorySet)
         }
         else {
-            decideByExpectation(dices, possibleScores)
+            decideByExpectation(dices, notScoredCategorySet)
         }
 
     }
 
-    private fun decideByCurrent(dices: Map<Int, List<Int>>, possibleScores: Set<String>): Decision {
-        val matchedScores = possibleScores.filter {
+    private fun decideByCurrent(dices: Map<Int, List<Int>>, notScoredCategorySet: Set<String>): Decision {
+        val matchedCategoryList = notScoredCategorySet.filter {
             it.isMatched(dices)
         }.sortedBy {
             it.choicePriority()
         }
 
         return Decision(
-            choice = matchedScores.firstOrNull() ?: possibleScores.minByOrNull {
+            choice = matchedCategoryList.firstOrNull() ?: notScoredCategorySet.minByOrNull {
                 it.discardPriority(dices)
             }
         )
     }
 
-    private fun decideByExpectation(dices: Map<Int, List<Int>>, possibleScores: Set<String>): Decision {
-        val matchedScores = possibleScores.filter {
+    private fun decideByExpectation(dices: Map<Int, List<Int>>, notScoredCategorySet: Set<String>): Decision {
+        val matchedCategoryList = notScoredCategorySet.filter {
             it.isMatched(dices) && it != "choice"
         }.sortedBy {
             it.choicePriority()
         }
-        val maxSameCount = getMaxSameCount(dices)
+        val maxSameCountMap = getMaxSameCountMap(dices)
 
-        return if (matchedScores.isNotEmpty()) {
-            // yacht, largeStraight, fullHouse
-            if (matchedScores[0].choicePriority() < 2) {
+        return if (matchedCategoryList.isNotEmpty()) {
+            if (matchedCategoryList.first() == "yacht"
+                || matchedCategoryList.first() == "largeStraight"
+                || matchedCategoryList.first() == "fullHouse") {
                 Decision(
-                    choice = matchedScores[0]
+                    choice = matchedCategoryList.first()
                 )
             }
-            else if (matchedScores[0] == "smallStraight") {
-                if (possibleScores.contains("largeStraight")) {
+            else if (matchedCategoryList.first() == "smallStraight") {
+                if (notScoredCategorySet.contains("largeStraight")) {
                     getSmallStraightIndices(dices)
                 }
                 else {
@@ -87,10 +88,10 @@ class DecisionService {
                     )
                 }
             }
-            else if (matchedScores[0] == "fourKind") {
-                if (possibleScores.contains("yacht")) {
+            else if (matchedCategoryList.first() == "fourKind") {
+                if (notScoredCategorySet.contains("yacht")) {
                     Decision(
-                        keep = maxSameCount.values.first()
+                        keep = maxSameCountMap.values.first()
                     )
                 }
                 else {
@@ -99,53 +100,77 @@ class DecisionService {
                     )
                 }
             }
-            // 상단 항목이 matchedScores에 남아있는 경우에 해당
+            // 상단 항목만 matchedCategoryList에 남아있는 경우에 해당
+            // 상단 항목이 matchedCategoryList에 포함되어 있다면 눈의 개수가 3개 이상이므로
+            // maxSameCount의 first가 곧 해당 눈이 됨
             else {
                 Decision(
-                    keep = maxSameCount.entries.first().value
+                    keep = maxSameCountMap.entries.first().value
                 )
             }
         }
         else {
-            doGidoMeta(dices, maxSameCount, possibleScores)
+            doGidoMeta(dices, maxSameCountMap, notScoredCategorySet)
         }
     }
 
-    private fun doGidoMeta(dices: Map<Int, List<Int>>, maxSameCount: Map<Int, List<Int>>,
-                           possibleScores: Set<String>): Decision {
-        // 가능한 경우가 choice 밖에 없는 경우: 4 이상의 값만 남김
-        if (possibleScores.first() == "choice") {
+    private fun doGidoMeta(
+        dices: Map<Int, List<Int>>,
+        maxSameCountMap: Map<Int, List<Int>>,
+        notScoredCategorySet: Set<String>
+    ): Decision {
+        if (notScoredCategorySet.size == 1 && notScoredCategorySet.contains("choice")) {
             return getLargeDices(dices)
         }
 
-        val possibleUpperCategories = dices.entries.sortedBy {
-            it.value.size
-        }.reversed().filter {
-            possibleScores.contains(it.key.toUpperScoreName())
+        val possibleUpperCategorySet = dices.filter {
+            notScoredCategorySet.contains(it.key.toUpperScoreName())
         }.map {
             it.key
-        }
+        }.toSet()
 
         return when (dices.size) {
-            5, 4 -> {
+            5 -> {
                 when {
-                    possibleScores.contains("largeStraight") -> {
+                    notScoredCategorySet.contains("largeStraight") -> {
                         getDecisionForStraight(dices, 3)
                     }
-                    possibleScores.contains("smallStraight") -> {
+                    notScoredCategorySet.contains("smallStraight") -> {
                         getDecisionForStraight(dices, 2)
                     }
-                    possibleScores.contains("yacht")
-                        || possibleScores.contains("fourKind")
-                        || possibleScores.contains("fullHouse") -> {
+                    else -> {
+                        val targetEye = possibleUpperCategorySet.toList().sortedBy { it }.reversed().firstOrNull()
+                            ?: dices.maxOf { it.key }
                         Decision(
-                            keep = maxSameCount.values.first()
+                            keep = dices[targetEye]!!
+                        )
+                    }
+                }
+            }
+            4 -> {
+                when {
+                    notScoredCategorySet.contains("largeStraight") -> {
+                        getDecisionForStraight(dices, 3)
+                    }
+                    notScoredCategorySet.contains("smallStraight") -> {
+                        getDecisionForStraight(dices, 2)
+                    }
+                    notScoredCategorySet.contains("yacht")
+                        || notScoredCategorySet.contains("fourKind")
+                        || notScoredCategorySet.contains("fullHouse") -> {
+                        val targetEye = if (possibleUpperCategorySet.contains(maxSameCountMap.keys.first())) {
+                            maxSameCountMap.keys.first()
+                        } else {
+                            dices.maxOf { it.key }
+                        }
+                        Decision(
+                            keep = dices[targetEye]!!
                         )
                     }
                     else -> {
-                        if (possibleUpperCategories.isNotEmpty()) {
+                        if (possibleUpperCategorySet.isNotEmpty()) {
                             Decision(
-                                keep = dices[possibleUpperCategories.first()]!!
+                                keep = dices[possibleUpperCategorySet.first()]!!
                             )
                         }
                         else {
@@ -156,28 +181,29 @@ class DecisionService {
             }
             3 -> {
                 when {
-                    possibleScores.contains("fullHouse") -> {
+                    notScoredCategorySet.contains("fullHouse") -> {
                         Decision(
-                            keep = maxSameCount.values.flatten()
+                            keep = maxSameCountMap.values.flatten()
                         )
                     }
-                    possibleScores.contains("largeStraight") -> {
+                    notScoredCategorySet.contains("largeStraight") -> {
                         getDecisionForStraight(dices, 3)
                     }
-                    possibleScores.contains("smallStraight") -> {
+                    notScoredCategorySet.contains("smallStraight") -> {
                         getDecisionForStraight(dices, 2)
                     }
                     else -> {
-                        if (maxSameCount.keys.size == 1) {
-                            if (possibleScores.contains("yacht") || possibleScores.contains("fourKind")) {
+                        // 3, 1, 1
+                        if (maxSameCountMap.keys.size == 1) {
+                            if (notScoredCategorySet.contains("yacht") || notScoredCategorySet.contains("fourKind")) {
                                 Decision(
-                                    keep = maxSameCount.values.first()
+                                    keep = maxSameCountMap.values.first()
                                 )
                             }
                             else {
-                                if (possibleUpperCategories.isNotEmpty()) {
+                                if (possibleUpperCategorySet.isNotEmpty()) {
                                     Decision(
-                                        keep = dices[possibleUpperCategories.first()]!!
+                                        keep = dices[possibleUpperCategorySet.first()]!!
                                     )
                                 }
                                 else {
@@ -185,15 +211,16 @@ class DecisionService {
                                 }
                             }
                         }
+                        // 2, 2, 1
                         else {
-                            if (possibleUpperCategories.isNotEmpty()) {
+                            if (possibleUpperCategorySet.isNotEmpty()) {
                                 Decision(
-                                    keep = dices[possibleUpperCategories.first()]!!
+                                    keep = dices[possibleUpperCategorySet.first()]!!
                                 )
                             }
                             else {
                                 Decision(
-                                    keep = maxSameCount.values.first()
+                                    keep = maxSameCountMap.values.first()
                                 )
                             }
                         }
@@ -201,28 +228,28 @@ class DecisionService {
                 }
             }
             2 -> {
-                if (possibleScores.contains("yacht") || possibleScores.contains("fourKind")) {
+                if (notScoredCategorySet.contains("yacht") || notScoredCategorySet.contains("fourKind")) {
                     Decision(
-                        keep = maxSameCount.values.first()
+                        keep = maxSameCountMap.values.first()
                     )
                 }
-                else if (possibleScores.contains("fullHouse")) {
+                else if (notScoredCategorySet.contains("fullHouse")) {
                     Decision(
-                        keep = maxSameCount.values.first().subList(0, 3)
+                        keep = maxSameCountMap.values.first().subList(0, 3)
                     )
                 }
                 else {
-                    if (possibleScores.contains("smallStraight")) {
+                    if (notScoredCategorySet.contains("smallStraight")) {
                         getDecisionForStraight(dices, 2)
                     }
-                    else if (possibleScores.contains("largeStraight")) {
+                    else if (notScoredCategorySet.contains("largeStraight")) {
                         getDecisionForStraight(dices, 3)
                     }
                     else {
                         val less = dices.keys.first {
-                            it != maxSameCount.keys.first()
+                            it != maxSameCountMap.keys.first()
                         }
-                        if (possibleScores.contains(less.toUpperScoreName())) {
+                        if (notScoredCategorySet.contains(less.toUpperScoreName())) {
                             Decision(
                                 keep = dices[less]!!
                             )
@@ -239,7 +266,7 @@ class DecisionService {
         }
     }
 
-    private fun getMaxSameCount(dices: Map<Int, List<Int>>): Map<Int, List<Int>> {
+    private fun getMaxSameCountMap(dices: Map<Int, List<Int>>): Map<Int, List<Int>> {
         val maxCount = dices.values.maxOf { it.size }
         return dices.filter {
             it.value.size == maxCount
