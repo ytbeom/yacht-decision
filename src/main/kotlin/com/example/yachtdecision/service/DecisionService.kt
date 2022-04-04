@@ -193,6 +193,7 @@ class DecisionService {
                         getDecisionForStraight(dices, 2)
                     }
                     else -> {
+                        println(maxSameCountMap.keys.size)
                         // 3, 1, 1
                         if (maxSameCountMap.keys.size == 1) {
                             if (notScoredCategorySet.contains("yacht") || notScoredCategorySet.contains("fourKind")) {
@@ -219,9 +220,7 @@ class DecisionService {
                                 )
                             }
                             else {
-                                Decision(
-                                    keep = maxSameCountMap.values.first()
-                                )
+                                Decision()
                             }
                         }
                     }
